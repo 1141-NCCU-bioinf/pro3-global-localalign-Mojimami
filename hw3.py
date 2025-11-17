@@ -2,132 +2,209 @@ import numpy as np
 import pandas as pd
 
 def alignment(input_path, score_path, output_path, aln, gap):
-    """Main alignment function"""
+    sequences = []
+    headers = []
+    with open(input_path, 'r') as file:
+        current_seq = ""
+        for line in file:
+            line = line.strip()
+            if line.startswith('>'):
+                if current_seq:
+                    sequences.append(current_seq)
+                headers.append(line)
+                current_seq = ""
+            else:
+                current_seq += line
+        if current_seq:
+            sequences.append(current_seq)
     
-    # Read FASTA file
-    with open(input_path, 'r') as f:
-        lines = f.readlines()
-    headers = [lines[i].strip() for i in range(0, len(lines), 2)]
-    seqs = [lines[i].strip() for i in range(1, len(lines), 2)]
-    s1, s2 = seqs[0], seqs[1]
+    seq_a = sequences[0]
+    seq_b = sequences[1]
     
-    # Load scoring matrix using pandas
-    df = pd.read_csv(score_path, sep='\s+', comment='#', index_col=0)
-    score_dict = df.to_dict()
+    scoring_matrix = pd.read_csv(score_path, sep='\s+', comment='#', index_col=0)
     
-    # Initialize matrices
-    m, n = len(s2) + 1, len(s1) + 1
-    dp = np.zeros((m, n))
+    score_lookup = {}
+    for row_aa in scoring_matrix.index:
+        score_lookup[row_aa] = {}
+        for col_aa in scoring_matrix.columns:
+            score_lookup[row_aa][col_aa] = int(scoring_matrix.loc[row_aa, col_aa])
+    
+    rows = len(seq_b) + 1
+    cols = len(seq_a) + 1
+    
+    score_matrix = np.zeros((rows, cols), dtype=float)
+    
+    direction_matrix = [[[] for _ in range(cols)] for _ in range(rows)]
     
     if aln == 'global':
-        # Global alignment initialization
-        dp[0, :] = np.arange(n) * gap
-        dp[:, 0] = np.arange(m) * gap
+        for col_idx in range(cols):
+            score_matrix[0][col_idx] = gap * col_idx
+            if col_idx > 0:
+                direction_matrix[0][col_idx] = ['left']
         
-        # Fill matrix
-        for i in range(1, m):
-            for j in range(1, n):
-                match = dp[i-1, j-1] + score_dict.get(s1[j-1], {}).get(s2[i-1], gap)
-                delete = dp[i-1, j] + gap
-                insert = dp[i, j-1] + gap
-                dp[i, j] = max(match, delete, insert)
+        for row_idx in range(rows):
+            score_matrix[row_idx][0] = gap * row_idx
+            if row_idx > 0:
+                direction_matrix[row_idx][0] = ['up']
         
-        # Traceback from bottom-right
-        i, j = m-1, n-1
-        a1, a2 = '', ''
+        for row_idx in range(1, rows):
+            for col_idx in range(1, cols):
+                char_a = seq_a[col_idx - 1]
+                char_b = seq_b[row_idx - 1]
+                
+                diagonal_score = score_matrix[row_idx-1][col_idx-1] + score_lookup[char_b][char_a]
+                up_score = score_matrix[row_idx-1][col_idx] + gap
+                left_score = score_matrix[row_idx][col_idx-1] + gap
+                
+                max_score = max(diagonal_score, up_score, left_score)
+                score_matrix[row_idx][col_idx] = max_score
+                
+                if diagonal_score == max_score:
+                    direction_matrix[row_idx][col_idx].append('diag')
+                if up_score == max_score:
+                    direction_matrix[row_idx][col_idx].append('up')
+                if left_score == max_score:
+                    direction_matrix[row_idx][col_idx].append('left')
         
-        while i > 0 or j > 0:
-            if i == 0:
-                a1 = s1[j-1] + a1
-                a2 = '-' + a2
-                j -= 1
-            elif j == 0:
-                a1 = '-' + a1
-                a2 = s2[i-1] + a2
-                i -= 1
+        aligned_a = ""
+        aligned_b = ""
+        row_pos = rows - 1
+        col_pos = cols - 1
+        
+        while row_pos > 0 or col_pos > 0:
+            if row_pos == 0:
+                aligned_a = seq_a[col_pos - 1] + aligned_a
+                aligned_b = '-' + aligned_b
+                col_pos -= 1
+            elif col_pos == 0:
+                aligned_a = '-' + aligned_a
+                aligned_b = seq_b[row_pos - 1] + aligned_b
+                row_pos -= 1
             else:
-                current = dp[i, j]
-                if current == dp[i-1, j-1] + score_dict.get(s1[j-1], {}).get(s2[i-1], gap):
-                    a1 = s1[j-1] + a1
-                    a2 = s2[i-1] + a2
-                    i -= 1
-                    j -= 1
-                elif current == dp[i-1, j] + gap:
-                    a1 = '-' + a1
-                    a2 = s2[i-1] + a2
-                    i -= 1
+                current_score = score_matrix[row_pos][col_pos]
+                char_a = seq_a[col_pos - 1]
+                char_b = seq_b[row_pos - 1]
+                
+                if current_score == score_matrix[row_pos-1][col_pos-1] + score_lookup[char_b][char_a]:
+                    aligned_a = char_a + aligned_a
+                    aligned_b = char_b + aligned_b
+                    row_pos -= 1
+                    col_pos -= 1
+                elif current_score == score_matrix[row_pos-1][col_pos] + gap:
+                    aligned_a = '-' + aligned_a
+                    aligned_b = char_b + aligned_b
+                    row_pos -= 1
                 else:
-                    a1 = s1[j-1] + a1
-                    a2 = '-' + a2
-                    j -= 1
+                    aligned_a = char_a + aligned_a
+                    aligned_b = '-' + aligned_b
+                    col_pos -= 1
         
-        results = [(a1, a2)]
+        with open(output_path, 'w') as out_file:
+            out_file.write(headers[0] + '\n')
+            out_file.write(aligned_a + '\n')
+            out_file.write(headers[1] + '\n')
+            out_file.write(aligned_b + '\n')
+    
+    else:
+        max_score_value = 0
+        max_score_positions = []
         
-    else:  # local alignment
-        # Keep track of paths at each cell
-        paths = [[[] for _ in range(n)] for _ in range(m)]
-        
-        # Fill matrix and track maximum
-        max_score = 0
-        max_pos = []
-        
-        for i in range(1, m):
-            for j in range(1, n):
-                match = dp[i-1, j-1] + score_dict.get(s1[j-1], {}).get(s2[i-1], gap)
-                delete = dp[i-1, j] + gap
-                insert = dp[i, j-1] + gap
+        for row_idx in range(1, rows):
+            for col_idx in range(1, cols):
+                char_a = seq_a[col_idx - 1]
+                char_b = seq_b[row_idx - 1]
                 
-                score = max(0, match, delete, insert)
-                dp[i, j] = score
+                diagonal_score = score_matrix[row_idx-1][col_idx-1] + score_lookup[char_b][char_a]
+                up_score = score_matrix[row_idx-1][col_idx] + gap
+                left_score = score_matrix[row_idx][col_idx-1] + gap
                 
-                if score > 0:
-                    if score == match:
-                        paths[i][j].append('m')
-                    if score == delete:
-                        paths[i][j].append('d')
-                    if score == insert:
-                        paths[i][j].append('i')
+                max_score = max(0, diagonal_score, up_score, left_score)
+                score_matrix[row_idx][col_idx] = max_score
                 
-                if score > max_score:
-                    max_score = score
-                    max_pos = [(i, j)]
-                elif score == max_score and score > 0:
-                    max_pos.append((i, j))
+                if max_score > 0:
+                    if diagonal_score == max_score:
+                        direction_matrix[row_idx][col_idx].append('diag')
+                    if up_score == max_score:
+                        direction_matrix[row_idx][col_idx].append('up')
+                    if left_score == max_score:
+                        direction_matrix[row_idx][col_idx].append('left')
+                
+                if max_score == 0:
+                    if diagonal_score == 0 and score_matrix[row_idx-1][col_idx-1] > 0:
+                        direction_matrix[row_idx][col_idx].append('diag')
+                    if up_score == 0 and score_matrix[row_idx-1][col_idx] > 0:
+                        direction_matrix[row_idx][col_idx].append('up')
+                    if left_score == 0 and score_matrix[row_idx][col_idx-1] > 0:
+                        direction_matrix[row_idx][col_idx].append('left')
+                
+                if max_score > max_score_value:
+                    max_score_value = max_score
+                    max_score_positions = [(row_idx, col_idx)]
+                elif max_score == max_score_value and max_score > 0:
+                    max_score_positions.append((row_idx, col_idx))
         
-        # Traceback all paths
-        all_alns = []
+        all_alignments = set()
         
-        def trace(i, j, a1='', a2=''):
-            if dp[i, j] == 0:
-                if a1:
-                    all_alns.append((a1, a2))
+        def traceback_recursive(r_pos, c_pos, aln_a, aln_b):
+            if r_pos == 0 or c_pos == 0:
+                if aln_a:
+                    all_alignments.add((aln_a, aln_b))
                 return
             
-            for move in paths[i][j]:
-                if move == 'm':
-                    trace(i-1, j-1, s1[j-1] + a1, s2[i-1] + a2)
-                elif move == 'd':
-                    trace(i-1, j, '-' + a1, s2[i-1] + a2)
-                elif move == 'i':
-                    trace(i, j-1, s1[j-1] + a1, '-' + a2)
+            if score_matrix[r_pos][c_pos] == 0:
+                if direction_matrix[r_pos][c_pos]:
+                    for direction in direction_matrix[r_pos][c_pos]:
+                        if direction == 'diag':
+                            new_a = seq_a[c_pos - 1] + aln_a
+                            new_b = seq_b[r_pos - 1] + aln_b
+                            all_alignments.add((new_a, new_b))
+                        elif direction == 'up':
+                            new_a = '-' + aln_a
+                            new_b = seq_b[r_pos - 1] + aln_b
+                            all_alignments.add((new_a, new_b))
+                        elif direction == 'left':
+                            new_a = seq_a[c_pos - 1] + aln_a
+                            new_b = '-' + aln_b
+                            all_alignments.add((new_a, new_b))
+                else:
+                    if aln_a:
+                        all_alignments.add((aln_a, aln_b))
+                return
+            
+            for direction in direction_matrix[r_pos][c_pos]:
+                if direction == 'diag':
+                    new_a = seq_a[c_pos - 1] + aln_a
+                    new_b = seq_b[r_pos - 1] + aln_b
+                    traceback_recursive(r_pos - 1, c_pos - 1, new_a, new_b)
+                elif direction == 'up':
+                    new_a = '-' + aln_a
+                    new_b = seq_b[r_pos - 1] + aln_b
+                    traceback_recursive(r_pos - 1, c_pos, new_a, new_b)
+                elif direction == 'left':
+                    new_a = seq_a[c_pos - 1] + aln_a
+                    new_b = '-' + aln_b
+                    traceback_recursive(r_pos, c_pos - 1, new_a, new_b)
         
-        for pos in max_pos:
-            trace(pos[0], pos[1])
+        for start_r, start_c in max_score_positions:
+            traceback_recursive(start_r, start_c, "", "")
         
-        # Filter by length and sort
-        if all_alns:
-            max_len = max(len(x[0]) for x in all_alns)
-            results = [x for x in all_alns if len(x[0]) == max_len]
-            results = sorted(set(results))
+        alignment_list = list(all_alignments)
+        if alignment_list:
+            max_length = max(len(aln[0]) for aln in alignment_list)
+            filtered_alignments = [(a, b) for a, b in alignment_list if len(a) == max_length]
+            
+            filtered_alignments.sort(key=lambda x: (x[0], x[1]))
+            
+            with open(output_path, 'w') as out_file:
+                for aligned_a, aligned_b in filtered_alignments:
+                    out_file.write(headers[0] + '\n')
+                    out_file.write(aligned_a + '\n')
+                    out_file.write(headers[1] + '\n')
+                    out_file.write(aligned_b + '\n')
         else:
-            results = []
-    
-    # Write output
-    with open(output_path, 'w') as f:
-        for a1, a2 in results:
-            f.write(f'{headers[0]}\n{a1}\n{headers[1]}\n{a2}\n')
+            with open(output_path, 'w') as out_file:
+                pass
 
-# Test the implementation
 if __name__ == "__main__":
     alignment("examples/test_global.fasta", "examples/pam250.txt", "examples/result_global.fasta", "global", -10)
     alignment("examples/test_local.fasta", "examples/pam100.txt", "examples/result_local.fasta", "local", -10)

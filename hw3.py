@@ -128,13 +128,12 @@ def alignment(input_path, score_path, output_path, aln, gap):
                         direction_matrix[row_idx][col_idx].append('up')
                     if left_score == max_score:
                         direction_matrix[row_idx][col_idx].append('left')
-                
-                if max_score == 0:
-                    if diagonal_score == 0 and score_matrix[row_idx-1][col_idx-1] > 0:
+                elif max_score == 0:
+                    if diagonal_score == 0:
                         direction_matrix[row_idx][col_idx].append('diag')
-                    if up_score == 0 and score_matrix[row_idx-1][col_idx] > 0:
+                    if up_score == 0:
                         direction_matrix[row_idx][col_idx].append('up')
-                    if left_score == 0 and score_matrix[row_idx][col_idx-1] > 0:
+                    if left_score == 0:
                         direction_matrix[row_idx][col_idx].append('left')
                 
                 if max_score > max_score_value:
@@ -151,24 +150,30 @@ def alignment(input_path, score_path, output_path, aln, gap):
                     all_alignments.add((aln_a, aln_b))
                 return
             
-            if score_matrix[r_pos][c_pos] == 0:
-                if direction_matrix[r_pos][c_pos]:
-                    for direction in direction_matrix[r_pos][c_pos]:
-                        if direction == 'diag':
+            current_score = score_matrix[r_pos][c_pos]
+            
+            if current_score == 0:
+                for direction in direction_matrix[r_pos][c_pos]:
+                    if direction == 'diag' and r_pos > 0 and c_pos > 0:
+                        prev_score = score_matrix[r_pos-1][c_pos-1]
+                        if prev_score > 0:
                             new_a = seq_a[c_pos - 1] + aln_a
                             new_b = seq_b[r_pos - 1] + aln_b
                             all_alignments.add((new_a, new_b))
-                        elif direction == 'up':
+                    elif direction == 'up' and r_pos > 0:
+                        prev_score = score_matrix[r_pos-1][c_pos]
+                        if prev_score > 0:
                             new_a = '-' + aln_a
                             new_b = seq_b[r_pos - 1] + aln_b
                             all_alignments.add((new_a, new_b))
-                        elif direction == 'left':
+                    elif direction == 'left' and c_pos > 0:
+                        prev_score = score_matrix[r_pos][c_pos-1]
+                        if prev_score > 0:
                             new_a = seq_a[c_pos - 1] + aln_a
                             new_b = '-' + aln_b
                             all_alignments.add((new_a, new_b))
-                else:
-                    if aln_a:
-                        all_alignments.add((aln_a, aln_b))
+                if not direction_matrix[r_pos][c_pos] and aln_a:
+                    all_alignments.add((aln_a, aln_b))
                 return
             
             for direction in direction_matrix[r_pos][c_pos]:
